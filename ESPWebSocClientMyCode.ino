@@ -1,79 +1,169 @@
+/*
+ * WebSocketClientSSL.ino
+ *
+ * Created on: 10.12.2015
+ *
+ * note SSL is only possible with the ESP8266
+ *
+ */
+
+#include <Arduino.h>
+
 #include <WiFi.h>
-#include <WebSocketClient.h>  // library needed for connecting to a server.
+#include <WiFiMulti.h>
+#include <WiFiClientSecure.h>
+#include <WebSocketsClient.h>
+//#include <OneWire.h>
+//#include <SPI.h>
+//#include <DallasTemperature.h>
+#include <DHT.h>
 
-//credentials needed to connect to the WiFi network
- 
-const char* ssid     = "YourNetworkName";
-const char* password = "YourNetworkPassword";
+#define DHTPIN 5          //Digital pin connected to the DHT sensor
+// Uncomment whatever type of DHT sensor you're using.
+#define DHTTYPE DHT11     //DHT 11
+//#define DHTTYPE DHT22   //DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT21   //DHT 21 (AM2301)
+DHT dht(DHTPIN, DHTTYPE); // Initialize DHT sensor.
 
-//specify the host to which we will connect, and the URL path to be used.
- 
-char path[] = "/echo";
-char host[] = "demos.kaazing.com";
- 
-WebSocketClient webSocketClient;   // object of class WebSocketClient, which will expose the functionality needed to interact with the server.
-WiFiClient client;                 //object of class WiFiClient, which will be used by the WebSocketClient object under the hood
- 
-void setup() {
-  Serial.begin(115200);
+WiFiMulti WiFiMulti;
+WebSocketsClient webSocket;
 
-  //establishing WiFi connection. 
+//#define Serial Serial1
+
+void DHTSensor()
+{
+  float h = dht.readHumidity();        //reads humidity
+  float t = dht.readTemperature();     //Read temperature as Celsius (the default)
+  //float f = dht.readTemperature(true); //Read temperature as Fahrenheit (isFahrenheit = true)
   
-  WiFi.begin(ssid, password);
- 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
- 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
- 
-  delay(5000);
-
-  //Once connected to the WiFi network, we will establish a TCP connection to the host by calling the connect method of our WiFiClient.
- 
-  if (client.connect(host, 80)) {
-    Serial.println("Connected");
-  } else {
-    Serial.println("Connection failed.");
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
   }
 
-  //establish a websocket handshake with the server via HTTP request.
-  //it will send to the server the HTTP request to perform the upgrade of the connection to websocket.
-  //This upgrade is needed since the websocket protocol was developed in such a way that the server can use the same port to talk with both HTTP and websocket clients
+  //heat index is an index that combines air temperature and relative humidity, in shaded areas, to posit a human-perceived equivalent temperature
+  // Compute heat index in Fahrenheit (the default)
+  // float hif = dht.computeHeatIndex(f, h);
+  // Compute heat index in Celsius (isFahreheit = false)
+  // float hic = dht.computeHeatIndex(t, h, false);  
 
-  //assign to the path and host data members of our WebSocketClient the host and path of the URL that we defined early in global variables.
- 
-  webSocketClient.path = path;
-  webSocketClient.host = host;
-  if (webSocketClient.handshake(client)) {
-    Serial.println("Handshake successful");
-  } else {
-    Serial.println("Handshake failed.");
-  }
- 
+  //Serial.print() can also be used. Serial.print() helps dev boards with low RAM.
+  Serial.print(F("Humidity: "));
+  Serial.print(h);
+  Serial.print(F("%  Temperature: "));
+  Serial.print(t);
+  Serial.print(F("°C "));
+  /*Serial.print(f);
+  Serial.print(F("°F  Heat index: "));
+  Serial.print(hic);
+  Serial.print(F("°C "));
+  Serial.print(hif);
+  Serial.println(F("°F"));
+  */
 }
- 
-void loop() {
-  String data;
- 
-  if (client.connected()) {
- 
-    webSocketClient.sendData("Info to be echoed back");               //send data to the server.
- 
-    webSocketClient.getData(data);                                    //recieve data from the server. Here server will just echo what we sent.
-    if (data.length() > 0) {
-      Serial.print("Received data: ");
-      Serial.println(data);
-    }
- 
-  } else {
-    Serial.println("Client disconnected.");
+
+void soilMoisture()
+{
+  sensor = analogRead(A0);
+  output = (100 - map(sensor, 0, 1023, 0, 100));
+  delay(1000);
+  //didnt understand below commented lines
+  /*
+  sensors.requestTemperatures();
+  float temp = sensors.getTempCByIndex(0);
+  Serial.println(temp);
+  */
+  Serial.print("moisture = ");
+  Serial.print(output);
+  Serial.println("%");
+}
+
+void hexdump(const void *mem, uint32_t len, uint8_t cols = 16) {
+ const uint8_t* src = (const uint8_t*) mem;
+ Serial.printf("\n[HEXDUMP] Address: 0x%08X len: 0x%X (%d)", (ptrdiff_t)src, len, len);
+ for(uint32_t i = 0; i < len; i++) {
+  if(i % cols == 0) {
+   Serial.printf("\n[0x%08X] 0x%08X: ", (ptrdiff_t)src, i);
   }
- 
-  delay(3000);
- 
+  Serial.printf("%02X ", *src);
+  src++;
+ }
+ Serial.printf("\n");
+}
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+
+
+    switch(type) {
+        case WStype_DISCONNECTED:
+            Serial.printf("[WSc] Disconnected!\n");
+            break;
+        case WStype_CONNECTED:
+            {
+                Serial.printf("[WSc] Connected to url: %s\n", payload);
+
+       // send message to server when Connected
+    webSocket.sendTXT("{ \"type\": \"register\", \"id\": \"zswitch-1\", \"timestamp\": 0, \"sign\": \"\"}");
+            }
+            break;
+        case WStype_TEXT:
+            Serial.printf("[WSc] get text: %s\n", payload);
+
+   // send message to server
+   // webSocket.sendTXT("message here");
+            break;
+        case WStype_BIN:
+            Serial.printf("[WSc] get binary length: %u\n", length);
+            hexdump(payload, length);
+
+            // send data to server
+            // webSocket.sendBIN(payload, length);
+            break;
+  case WStype_ERROR:   
+  case WStype_FRAGMENT_TEXT_START:
+  case WStype_FRAGMENT_BIN_START:
+  case WStype_FRAGMENT:
+  case WStype_FRAGMENT_FIN:
+   break;
+    }
+
+}
+
+void setup() {
+    // Serial.begin(921600);
+    Serial.begin(115200);
+
+    pinMode(A0,INPUT);
+
+    dht.begin();
+
+    //Serial.setDebugOutput(true);
+    Serial.setDebugOutput(true);
+
+    Serial.println();
+    Serial.println();
+    Serial.println();
+
+      for(uint8_t t = 4; t > 0; t--) {
+          Serial.printf("[SETUP] BOOT WAIT %d...\n", t);
+          Serial.flush();
+          delay(1000);
+      }
+
+    WiFiMulti.addAP("GNXS-181350", "youwillneverknow");
+
+    //WiFi.disconnect();
+    while(WiFiMulti.run() != WL_CONNECTED) {
+        delay(100);
+    }
+
+    webSocket.beginSSL("zgate-1.herokuapp.com", 443, "/");
+    webSocket.onEvent(webSocketEvent);
+
+}
+
+void loop() {
+    webSocket.loop();
+    DHTSensor();
+    soilMoisture();
 }
